@@ -2191,18 +2191,108 @@ function downloadAnxTemplate(n) {
 }
 
 function handleAnxUpload(e,n) {
-  const f=e.target.files[0]; if(!f) return;
-  toast(`📤 Annexure ${toRoman(n)} Excel uploaded — processing...`,'info');
-  setTimeout(()=>{
-    toast(`✅ Annexure ${toRoman(n)} data populated and converted to page`,'success');
-    // Highlight rows to simulate data processing
-    const rows = document.querySelectorAll(`#view-anx${n} tbody tr`);
-    rows.forEach(r => {
-      const originalBg = r.style.backgroundColor;
-      r.style.backgroundColor = '#dcfce7';
-      setTimeout(() => r.style.backgroundColor = originalBg, 2500);
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    try {
+      const data = new Uint8Array(evt.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheets = workbook.SheetNames;
+      if (!sheets.length) throw new Error('No sheets found in Excel file');
+
+      const tableIds = getAnnexureTableIds(n);
+      let updated = 0;
+
+      sheets.forEach(sheetName => {
+        const sheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        const tableId = findAnnexureTableId(n, sheetName, tableIds);
+        if (tableId && populateTableFromSheet(tableId, rows)) updated += 1;
+      });
+
+      if (!updated && tableIds.length && sheets.length === 1) {
+        const sheet = workbook.Sheets[sheets[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        if (populateTableFromSheet(tableIds[0], rows)) updated = 1;
+      }
+
+      if (!updated) throw new Error('No matching annexure table found');
+      toast(`✅ Annexure ${toRoman(n)} uploaded and ${updated} table(s) updated`,'success');
+    } catch (err) {
+      console.error(err);
+      toast(`⚠️ Upload failed: ${err.message}`,'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  e.target.value = '';
+}
+
+function getAnnexureTableIds(n) {
+  return {
+    1: ['anx1-rivers','anx1-desilt','anx1-patta','anx1-msand'],
+    2: ['anx2-leases'],
+    3: ['anx3-clusters','anx3-contiguous'],
+    4: ['anx4-routes','anx4-cluster-routes'],
+    5: ['anx5-benchmarks'],
+    6: ['anx6-final-clusters'],
+    7: ['anx7-patta-final']
+  }[n] || [];
+}
+
+function findAnnexureTableId(n, sheetName, tableIds) {
+  const key = String(sheetName || '').trim().toLowerCase();
+  const patterns = {
+    'anx1-rivers': ['river','rivers','source','sources'],
+    'anx1-desilt': ['desilt','de-silt','reservoir','lake','pond','dam'],
+    'anx1-patta': ['patta','khatedari','land'],
+    'anx1-msand': ['m-sand','msand','plant'],
+    'anx3-clusters': ['cluster'],
+    'anx3-contiguous': ['contiguous'],
+    'anx4-routes': ['route','routes','lease'],
+    'anx4-cluster-routes': ['cluster route','cluster routes'],
+    'anx5-benchmarks': ['bench','benchmark','cors'],
+    'anx6-final-clusters': ['final cluster','cluster summary'],
+    'anx7-patta-final': ['patta']
+  };
+
+  for (const tableId of tableIds) {
+    const keys = patterns[tableId] || [];
+    if (keys.some(k => key.includes(k))) return tableId;
+  }
+  return tableIds[0] || null;
+}
+
+function populateTableFromSheet(tableId, rows) {
+  const table = document.getElementById(tableId);
+  if (!table) return false;
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return false;
+
+  const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.innerText.trim().toLowerCase());
+  const cleanRows = rows.filter(row => Array.isArray(row) && row.some(cell => String(cell || '').trim() !== ''));
+  if (!cleanRows.length) return false;
+
+  const firstRow = cleanRows[0].map(cell => String(cell || '').trim().toLowerCase());
+  const isHeaderRow = firstRow.every((value, index) => {
+    const header = headers[index] || '';
+    return value && (header.includes(value) || value.includes(header));
+  });
+  if (isHeaderRow) cleanRows.shift();
+
+  tbody.innerHTML = '';
+  cleanRows.forEach(row => {
+    const tr = document.createElement('tr');
+    headers.forEach((_, index) => {
+      const value = row[index] !== undefined ? String(row[index]) : '';
+      const escaped = value.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      tr.insertAdjacentHTML('beforeend', `<td contenteditable>${escaped}</td>`);
     });
-  }, 1200);
+    if (headers.includes('action')) {
+      tr.insertAdjacentHTML('beforeend', `<td><button class="btn btn-xs btn-danger" onclick="delRow(this)">✕</button></td>`);
+    }
+    tbody.appendChild(tr);
+  });
+  return true;
 }
 
 function exportAnxPDF(n) { toast(`📄 Annexure ${typeof n==='number'?toRoman(n):n} PDF exported`,'success'); }
@@ -2564,6 +2654,9 @@ function generateFinalPDF() {
     { title: 'ANNEXURE III(b) — CONTIGUOUS CLUSTERS', id: '#anx3-contiguous' },
     { title: 'ANNEXURE IV(a) — LEASE ROUTES', id: '#anx4-routes' },
     { title: 'ANNEXURE IV(b) — CLUSTER ROUTES', id: '#anx4-cluster-routes' },
+    { title: 'ANNEXURE V — BENCH MARK & CORS', id: '#anx5-benchmarks' },
+    { title: 'ANNEXURE VI — FINAL CLUSTERS', id: '#anx6-final-clusters' },
+    { title: 'ANNEXURE VII — FINAL PATTA LANDS', id: '#anx7-patta-final' },
     { title: 'ADDITIONAL — SAND GHATS COORDS', id: '#anx-coords-tbl' },
     { title: 'ADDITIONAL — BENCH MARKS', id: '#anx-benchmark-tbl' },
     { title: 'ADDITIONAL — CORS STATIONS', id: '#anx-cors-tbl' },
