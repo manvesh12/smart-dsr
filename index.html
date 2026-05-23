@@ -10,6 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 <style>
 /* ═══════════════════════════════════════════════════════════════
    ROOT — IIT ROPAR ENTERPRISE GOVERNMENT THEME
@@ -1174,7 +1175,32 @@ img{max-width:100%;display:block;}
 
       <!-- ═══ ANNEXURES EXTRA ═══ -->
       <div id="view-annexures-extra" class="view">
-        <div class="header-row"><div><div class="page-title">Additional Annexures</div><div class="page-sub">Block Sand Ghats Coordinates, Bench Marks, CORS Stations, Final Cluster Details, Patta Lands</div></div></div>
+            <div class="header-row"><div><div class="page-title">Additional Annexures</div><div class="page-sub">Block Sand Ghats Coordinates, Bench Marks, CORS Stations, Final Cluster Details, Patta Lands</div></div></div>
+            <div style="margin-bottom:12px">
+              <div class="card">
+                <div class="card-hd"><div class="card-title">Upload Excel to Specific Table</div></div>
+                <div class="card-bd">
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select id="table-upload-select" style="min-width:260px;padding:8px;border:1px solid var(--border);border-radius:6px">
+                      <option value="anx1-rivers">Annexure I — Rivers</option>
+                      <option value="anx1-desilt">Annexure I — De-Siltation</option>
+                      <option value="anx1-patta">Annexure I — Patta Lands</option>
+                      <option value="anx1-msand">Annexure I — M-Sand Plants</option>
+                      <option value="anx2-leases">Annexure II — Leases</option>
+                      <option value="anx3-clusters">Annexure III — Clusters</option>
+                      <option value="anx3-contiguous">Annexure III — Contiguous Clusters</option>
+                      <option value="anx4-routes">Annexure IV — Lease Routes</option>
+                      <option value="anx4-cluster-routes">Annexure IV — Cluster Routes</option>
+                      <option value="anx5-benchmarks">Annexure V — Bench Marks & CORS</option>
+                      <option value="anx6-final-clusters">Annexure VI — Final Clusters</option>
+                      <option value="anx7-patta-final">Annexure VII — Final Patta Lands</option>
+                    </select>
+                    <label class="btn btn-navy btn-sm" style="cursor:pointer">📤 Upload Excel for Selected Table <input type="file" accept=".xlsx,.xls" hidden onchange="handleTableUpload(event)"></label>
+                    <div style="font-size:12px;color:var(--text-faint)">Select table → Upload Excel sheet (first sheet will be used)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
         <div class="feature-tabs">
           <div class="feature-tab active" onclick="switchAnxTab('coords',this)">Block Sand Ghats Coords</div>
           <div class="feature-tab" onclick="switchAnxTab('benchmark',this)">Bench Mark & CORS</div>
@@ -1641,6 +1667,7 @@ const S = {
     'M-sand (Proposed)','M-sand (Existing)','Clusters (Existing & Proposed)'
   ],
   auctionData: []
+  ,uploadedPDFs: {}
 };
 
 /* ══════════════════════════════════════
@@ -1943,6 +1970,32 @@ function handlePlateUpload(e, id) {
   if(f) toast(`📎 ${f.name} uploaded for this plate`,'success');
 }
 
+// Render uploaded PDF file pages to image dataURLs using pdf.js
+function renderPdfToImages(file, cb) {
+  const reader = new FileReader();
+  reader.onload = async function(evt) {
+    try {
+      if (window.pdfjsLib && pdfjsLib.GlobalWorkerOptions) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+      const array = new Uint8Array(evt.target.result);
+      const loadingTask = pdfjsLib.getDocument({data: array});
+      const pdf = await loadingTask.promise;
+      const imgs = [];
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const viewport = page.getViewport({scale: 1.5});
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        await page.render({canvasContext: ctx, viewport}).promise;
+        imgs.push(canvas.toDataURL('image/png'));
+      }
+      cb(null, imgs);
+    } catch (err) { cb(err); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 
 /* ══════════════════════════════════════
    FRONT MATTER
@@ -1951,7 +2004,19 @@ function handleFMUpload(e,type) {
   const f=e.target.files[0]; if (!f) return;
   const el=document.getElementById(`fm-${type}-file`);
   if (el) el.innerHTML=`<div class="file-item" style="margin-top:10px"><div class="file-icon" style="background:#fee2e2">📄</div><div class="file-info"><div class="file-name">${f.name}</div><div class="file-meta">${(f.size/1024).toFixed(1)} KB</div></div><span class="badge badge-green">✓ Ready</span></div>`;
-  toast(`📄 ${f.name} uploaded`,'success');
+  // If PDF, convert pages to images and store in S.uploadedPDFs
+  if (f.type === 'application/pdf' && window.pdfjsLib) {
+    renderPdfToImages(f, (err, imgs) => {
+      if (err) { console.error(err); toast('⚠️ PDF render failed','error'); return; }
+      S.uploadedPDFs[type] = imgs;
+      toast(`📄 ${f.name} uploaded and will be included in final PDF`,'success');
+    });
+  } else {
+    // non-pdf files: store as object URL for preview but embedding may not be supported
+    const url = URL.createObjectURL(f);
+    S.uploadedPDFs[type] = [url];
+    toast(`📄 ${f.name} uploaded`,'success');
+  }
 }
 function trigUp(id) { document.getElementById(id).click(); }
 function syncPreview() {}
@@ -2295,6 +2360,26 @@ function populateTableFromSheet(tableId, rows) {
   return true;
 }
 
+function handleTableUpload(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const sel = document.getElementById('table-upload-select');
+  const tableId = sel ? sel.value : null;
+  if (!tableId) { toast('Select a table first','warn'); return; }
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    try {
+      const data = new Uint8Array(evt.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (populateTableFromSheet(tableId, rows)) toast('✅ Table updated from Excel','success');
+      else toast('No data found in sheet','warn');
+    } catch (err) { console.error(err); toast('⚠️ Upload failed','error'); }
+  };
+  reader.readAsArrayBuffer(f);
+  e.target.value = '';
+}
+
 function exportAnxPDF(n) { toast(`📄 Annexure ${typeof n==='number'?toRoman(n):n} PDF exported`,'success'); }
 
 function toRoman(n) { return ['I','II','III','IV','V','VI','VII'][n-1]||n; }
@@ -2555,20 +2640,39 @@ function generateFinalPDF() {
     doc.setDrawColor(224,123,0); doc.setLineWidth(0.8); doc.line(pad,15,W-pad,15);
   };
 
-  // COVER PAGE
-  addPageHeader('COVER PAGE');
-  doc.setTextColor(...govBlue); doc.setFont('helvetica','bold'); doc.setFontSize(11);
-  doc.text('Enforcement & Monitoring Guidelines for Sand Mining', W/2, 30, {align:'center'});
-  doc.setDrawColor(...govBlue); doc.setLineWidth(0.5); doc.line(pad,33,W-pad,33);
-  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(...navyArr);
-  doc.text('DISTRICT SURVEY REPORT', W/2, 55, {align:'center'});
-  doc.setFontSize(14); doc.text('FOR SAND MINING', W/2, 65, {align:'center'});
-  doc.setFontSize(20); doc.setTextColor(...saffron);
-  doc.text(dist.toUpperCase()+' DISTRICT', W/2, 80, {align:'center'});
-  doc.setFontSize(13); doc.setTextColor(...navyArr); doc.text('State of Punjab · '+yr, W/2, 90, {align:'center'});
-  doc.setFontSize(10); doc.setTextColor(...govBlue);
-  doc.text('PREPARED BY: SUB-DIVISIONAL COMMITTEE OF '+dist.toUpperCase()+' DISTRICT', W/2, 130, {align:'center'});
-  doc.text('ASSISTED BY: RSP GREEN DEVELOPMENT AND LABORATORIES PVT. LTD', W/2, 138, {align:'center'});
+  // COVER PAGE or uploaded front-matter PDFs
+  let coverInserted = false;
+  if (S.uploadedPDFs && S.uploadedPDFs.cover && S.uploadedPDFs.cover.length) {
+    // Use uploaded cover PDF pages (rendered to images)
+    S.uploadedPDFs.cover.forEach((img, idx) => {
+      if (idx > 0) doc.addPage();
+      try { doc.addImage(img, 'PNG', 0, 0, W, 297); } catch(e) { try { doc.addImage(img, 'JPEG', 0, 0, W, 297); } catch(_){} }
+    });
+    coverInserted = true;
+  }
+  if (!coverInserted) {
+    addPageHeader('COVER PAGE');
+    doc.setTextColor(...govBlue); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text('Enforcement & Monitoring Guidelines for Sand Mining', W/2, 30, {align:'center'});
+    doc.setDrawColor(...govBlue); doc.setLineWidth(0.5); doc.line(pad,33,W-pad,33);
+    doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(...navyArr);
+    doc.text('DISTRICT SURVEY REPORT', W/2, 55, {align:'center'});
+    doc.setFontSize(14); doc.text('FOR SAND MINING', W/2, 65, {align:'center'});
+    doc.setFontSize(20); doc.setTextColor(...saffron);
+    doc.text(dist.toUpperCase()+' DISTRICT', W/2, 80, {align:'center'});
+    doc.setFontSize(13); doc.setTextColor(...navyArr); doc.text('State of Punjab · '+yr, W/2, 90, {align:'center'});
+    doc.setFontSize(10); doc.setTextColor(...govBlue);
+    doc.text('PREPARED BY: SUB-DIVISIONAL COMMITTEE OF '+dist.toUpperCase()+' DISTRICT', W/2, 130, {align:'center'});
+    doc.text('ASSISTED BY: RSP GREEN DEVELOPMENT AND LABORATORIES PVT. LTD', W/2, 138, {align:'center'});
+  }
+
+  // Include other front-matter uploads (certificate, toc, preface) after cover
+  ['cert','toc','pref'].forEach(type => {
+    const pages = S.uploadedPDFs && S.uploadedPDFs[type];
+    if (pages && pages.length) {
+      pages.forEach(img => { doc.addPage(); try { doc.addImage(img, 'PNG', 0, 0, W, 297); } catch(e) { try { doc.addImage(img, 'JPEG', 0, 0, W, 297); } catch(_){} } });
+    }
+  });
 
   // TABLE OF CONTENTS
   doc.addPage(); y=25; addPageHeader('CONTENTS');
